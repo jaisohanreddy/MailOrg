@@ -44,3 +44,5 @@ We are building the MVP step by step.
 ## 📄 License
 
 MIT License
+
+AI-powered workspace that learns what deserves your attention, starting with email.
