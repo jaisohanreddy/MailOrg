@@ -7,7 +7,7 @@ import type { NextRequest } from "next/server";
 // check (real session lookup via the Prisma adapter) happens in each
 // protected page/Server Action by calling `auth()` from "@/lib/auth" -
 // see https://nextjs.org/docs/app/guides/authentication#optimistic-checks-with-proxy-optional
-const PROTECTED_PREFIXES = ["/dashboard"];
+const PROTECTED_PREFIXES = ["/dashboard", "/inbox"];
 
 const SESSION_COOKIE_NAMES = [
   "authjs.session-token",
