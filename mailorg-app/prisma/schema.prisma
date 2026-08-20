@@ -20,9 +20,10 @@ model User {
   emailVerified DateTime?
   image         String?
 
-  accounts    Account[]
-  sessions    Session[]
-  preferences UserPreferences?
+  accounts      Account[]
+  sessions      Session[]
+  preferences   UserPreferences?
+  emailAnalyses EmailAnalysisRecord[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -78,4 +79,29 @@ model UserPreferences {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Permanent, per-user storage of successful (never fallback) AI analyses,
+// keyed by Gmail message id. analysisVersion lets us intentionally
+// invalidate and re-analyze old rows later by bumping ANALYSIS_VERSION in
+// src/lib/ai.ts without a migration.
+model EmailAnalysisRecord {
+  id              String @id @default(cuid())
+  userId          String
+  messageId       String
+  analysisVersion Int
+
+  priority       String
+  category       String
+  summary        String  @db.Text
+  actionRequired Boolean
+  action         String? @db.Text
+  deadline       String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, messageId])
 }

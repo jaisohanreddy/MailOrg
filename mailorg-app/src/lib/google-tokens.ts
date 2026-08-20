@@ -25,8 +25,15 @@ interface GoogleTokenResponse {
 // the stored refresh_token if the current one has expired. Tokens live on
 // the Account row Auth.js already creates on sign-in - this doesn't
 // introduce a new storage mechanism, only a way to keep it current.
+//
+// expires_at is only a local prediction of the token's maximum lifetime -
+// Google can invalidate a token earlier than that (revocation, rotation,
+// a newer token superseding it, etc.). Pass forceRefresh: true when a
+// caller has already learned from Google itself (e.g. a live 401) that
+// the cached token is dead, to skip trusting the stale timestamp.
 export async function getValidGoogleAccessToken(
-  userId: string
+  userId: string,
+  { forceRefresh = false }: { forceRefresh?: boolean } = {}
 ): Promise<string> {
   const account = await prisma.account.findFirst({
     where: { userId, provider: "google" },
@@ -40,8 +47,14 @@ export async function getValidGoogleAccessToken(
   const isExpired =
     !account.expires_at ||
     account.expires_at - EXPIRY_BUFFER_SECONDS <= nowInSeconds;
+  console.log({
+  expires_at: account.expires_at,
+  nowInSeconds,
+  isExpired,
+  hasAccessToken: !!account.access_token,
+});
 
-  if (!isExpired && account.access_token) {
+  if (!forceRefresh && !isExpired && account.access_token) {
     return account.access_token;
   }
 
@@ -60,9 +73,10 @@ export async function getValidGoogleAccessToken(
     }),
   });
 
-  if (!response.ok) {
-    throw new GoogleReauthRequiredError();
-  }
+if (!response.ok) {
+  console.log(await response.text());
+  throw new GoogleReauthRequiredError();
+}
 
   const tokens = (await response.json()) as GoogleTokenResponse;
   const expiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;
