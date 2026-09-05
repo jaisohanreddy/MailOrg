@@ -25,7 +25,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // the user's very first consent.
           access_type: "offline",
           prompt: "consent",
-          scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly",
+          scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",
         },
       },
     }),

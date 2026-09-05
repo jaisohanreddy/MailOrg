@@ -5,6 +5,11 @@ import Link from "next/link";
 
 import type { InboxMessage } from "@/lib/gmail";
 import type { EmailAnalysis } from "@/lib/ai";
+import { ArchiveButton } from "./ArchiveButton";
+import { ReadStatusToggle } from "./ReadStatusToggle";
+import { SpamButton } from "./SpamButton";
+import { StarToggle } from "./StarToggle";
+import { TrashButton } from "./TrashButton";
 
 const PRIORITY_BADGE_STYLES: Record<EmailAnalysis["priority"], string> = {
   high: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
@@ -53,54 +58,67 @@ function EmailCard({
     : "(no body extracted)";
 
   return (
-    <Link
-      href={`/inbox/${message.id}`}
+    <div
       className={`flex flex-col gap-2 rounded-xl border border-l-4 border-black/[.08] bg-white p-4 transition hover:border-black/[.15] hover:bg-zinc-50 dark:border-white/[.08] dark:bg-zinc-950 dark:hover:bg-zinc-900 ${
         analysis
           ? PRIORITY_BORDER_STYLES[analysis.priority]
           : "border-l-zinc-200 dark:border-l-zinc-800"
       }`}
     >
-      {analysis && (
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-start justify-between gap-3">
+        <Link href={`/inbox/${message.id}`} className="flex flex-1 flex-col gap-2">
+          {analysis && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE_STYLES[analysis.priority]}`}
+              >
+                {analysis.priority} priority
+              </span>
+              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                {analysis.category}
+              </span>
+              {analysis.actionRequired && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                  Action needed
+                  {analysis.action ? `: ${analysis.action}` : ""}
+                  {analysis.deadline ? ` (by ${analysis.deadline})` : ""}
+                </span>
+              )}
+            </div>
+          )}
+
           <span
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE_STYLES[analysis.priority]}`}
+            className={`text-black dark:text-zinc-50 ${message.isUnread ? "font-semibold" : "font-normal"}`}
           >
-            {analysis.priority} priority
+            {message.subject}
           </span>
-          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-            {analysis.category}
-          </span>
-          {analysis.actionRequired && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-              Action needed
-              {analysis.action ? `: ${analysis.action}` : ""}
-              {analysis.deadline ? ` (by ${analysis.deadline})` : ""}
+
+          {analysis?.summary && (
+            <span className="text-sm text-zinc-700 dark:text-zinc-300">
+              {analysis.summary}
             </span>
           )}
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-500">
+            <span>{message.from}</span>
+            <span aria-hidden="true">•</span>
+            <span>{message.date}</span>
+          </div>
+
+          <span className="text-xs text-zinc-400 dark:text-zinc-600">
+            {bodyPreview}
+          </span>
+        </Link>
+
+        <div className="flex items-center gap-1">
+          <StarToggle messageId={message.id} isStarred={message.isStarred} />
+          <ReadStatusToggle messageId={message.id} isUnread={message.isUnread} />
+          <ArchiveButton messageId={message.id} />
+          <TrashButton messageId={message.id} />
+          <SpamButton messageId={message.id} />
         </div>
-      )}
-
-      <span className="font-semibold text-black dark:text-zinc-50">
-        {message.subject}
-      </span>
-
-      {analysis?.summary && (
-        <span className="text-sm text-zinc-700 dark:text-zinc-300">
-          {analysis.summary}
-        </span>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-500">
-        <span>{message.from}</span>
-        <span aria-hidden="true">•</span>
-        <span>{message.date}</span>
       </div>
-
-      <span className="text-xs text-zinc-400 dark:text-zinc-600">
-        {bodyPreview}
-      </span>
-    </Link>
+    </div>
   );
 }
 

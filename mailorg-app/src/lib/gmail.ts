@@ -10,6 +10,8 @@ export interface InboxMessage {
   from: string;
   date: string;
   body: string;
+  isUnread: boolean;
+  isStarred: boolean;
 }
 
 interface GmailListResponse {
@@ -25,6 +27,7 @@ interface GmailMessageResponse {
   id: string;
   internalDate?: string;
   snippet?: string;
+  labelIds?: string[];
   payload?: {
     mimeType?: string;
     headers?: GmailMessageHeader[];
@@ -48,10 +51,15 @@ interface GmailMessagePart {
 // though our locally stored expires_at said it was still valid - Google
 // can invalidate a token before its nominal expiry, so that timestamp
 // alone can't be fully trusted.
-async function fetchGmail(userId: string, url: URL): Promise<Response> {
+async function fetchGmail(
+  userId: string,
+  url: URL,
+  init: RequestInit = {}
+): Promise<Response> {
   const accessToken = await getValidGoogleAccessToken(userId);
   const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${accessToken}` },
   });
 
   if (response.status !== 401) {
@@ -62,7 +70,8 @@ async function fetchGmail(userId: string, url: URL): Promise<Response> {
     forceRefresh: true,
   });
   return fetch(url, {
-    headers: { Authorization: `Bearer ${freshAccessToken}` },
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${freshAccessToken}` },
   });
 }
 
@@ -170,19 +179,35 @@ function toInboxMessage(message: GmailMessageResponse): InboxMessage {
       ? new Date(Number(message.internalDate)).toLocaleString()
       : "(unknown)",
     body: extractBody(message.payload),
+    isUnread: (message.labelIds ?? []).includes("UNREAD"),
+    isStarred: (message.labelIds ?? []).includes("STARRED"),
   };
 }
 
-// Fetches the user's most recent inbox messages, including their decoded
-// text body. No AI processing, no write access - read-only by design (see
-// the gmail.readonly scope requested in src/lib/auth.ts).
+// Fetches the user's most recent messages for the given Gmail label(s)
+// (INBOX by default), optionally constrained by a Gmail search query (the
+// same "q" syntax as Gmail's own search bar - passed through verbatim, no
+// custom parsing), including their decoded text body. No AI processing, no
+// write access for listing - read-only by design (see the gmail.readonly
+// scope requested in src/lib/auth.ts). Gmail remains the source of truth
+// for folder membership and search results; nothing here is duplicated
+// into the database.
 export async function listRecentEmails(
   userId: string,
-  { maxResults = 10 }: { maxResults?: number } = {}
+  {
+    maxResults = 10,
+    labelIds = ["INBOX"],
+    query,
+  }: { maxResults?: number; labelIds?: string[]; query?: string } = {}
 ): Promise<InboxMessage[]> {
   const listUrl = new URL(`${GMAIL_API_BASE}/messages`);
   listUrl.searchParams.set("maxResults", String(maxResults));
-  listUrl.searchParams.set("labelIds", "INBOX");
+  for (const labelId of labelIds) {
+    listUrl.searchParams.append("labelIds", labelId);
+  }
+  if (query) {
+    listUrl.searchParams.set("q", query);
+  }
 
   const listResponse = await fetchGmail(userId, listUrl);
 
@@ -239,4 +264,95 @@ export async function getEmailById(
 
   const message = (await messageResponse.json()) as GmailMessageResponse;
   return toInboxMessage(message);
+}
+
+// Adds/removes Gmail labels on a message via the messages.modify endpoint -
+// the shared primitive behind read/unread, starring, and any future
+// label-based mutation (archive, trash, spam, ...). Requires gmail.modify.
+async function modifyGmailLabels(
+  userId: string,
+  messageId: string,
+  { addLabelIds, removeLabelIds }: { addLabelIds?: string[]; removeLabelIds?: string[] }
+): Promise<void> {
+  const modifyUrl = new URL(`${GMAIL_API_BASE}/messages/${messageId}/modify`);
+
+  const response = await fetchGmail(userId, modifyUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...(addLabelIds ? { addLabelIds } : {}),
+      ...(removeLabelIds ? { removeLabelIds } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Gmail API error while modifying labels for message ${messageId}: ${response.status}`
+    );
+  }
+}
+
+// Marks a message as read or unread on the actual Gmail account by
+// adding/removing the UNREAD label.
+export async function setEmailReadStatus(
+  userId: string,
+  messageId: string,
+  markAsRead: boolean
+): Promise<void> {
+  return modifyGmailLabels(
+    userId,
+    messageId,
+    markAsRead ? { removeLabelIds: ["UNREAD"] } : { addLabelIds: ["UNREAD"] }
+  );
+}
+
+// Stars or unstars a message on the actual Gmail account by adding/removing
+// the STARRED label.
+export async function setEmailStarred(
+  userId: string,
+  messageId: string,
+  starred: boolean
+): Promise<void> {
+  return modifyGmailLabels(
+    userId,
+    messageId,
+    starred ? { addLabelIds: ["STARRED"] } : { removeLabelIds: ["STARRED"] }
+  );
+}
+
+// Archives a message on the actual Gmail account by removing the INBOX
+// label. The message itself is not deleted or moved to Trash/Spam - it
+// remains in the account, just no longer in the inbox view.
+export async function archiveEmail(
+  userId: string,
+  messageId: string
+): Promise<void> {
+  return modifyGmailLabels(userId, messageId, { removeLabelIds: ["INBOX"] });
+}
+
+// Moves a message to Gmail's Trash by adding the TRASH label and removing
+// INBOX - the same label diff Gmail's own dedicated messages.trash endpoint
+// applies (verified directly against the Gmail API), so this matches normal
+// trash semantics without a separate call shape. This is not permanent
+// deletion - the message remains in Trash until Gmail auto-expires it.
+export async function trashEmail(
+  userId: string,
+  messageId: string
+): Promise<void> {
+  return modifyGmailLabels(userId, messageId, {
+    addLabelIds: ["TRASH"],
+    removeLabelIds: ["INBOX"],
+  });
+}
+
+// Marks a message as spam by adding the SPAM label and removing INBOX. Not
+// permanent deletion - the message remains in the Spam folder in Gmail.
+export async function markEmailAsSpam(
+  userId: string,
+  messageId: string
+): Promise<void> {
+  return modifyGmailLabels(userId, messageId, {
+    addLabelIds: ["SPAM"],
+    removeLabelIds: ["INBOX"],
+  });
 }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth, signOut } from "@/lib/auth";
@@ -16,6 +17,12 @@ export default async function DashboardPlaceholderPage() {
       <p className="text-black dark:text-zinc-50">
         Signed in as {session.user.email}
       </p>
+      <Link
+        href="/inbox"
+        className="flex h-10 items-center justify-center rounded-full bg-blue-600 px-5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+      >
+        Go to Inbox
+      </Link>
       <form
         action={async () => {
           "use server";

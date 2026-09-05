@@ -47,12 +47,6 @@ export async function getValidGoogleAccessToken(
   const isExpired =
     !account.expires_at ||
     account.expires_at - EXPIRY_BUFFER_SECONDS <= nowInSeconds;
-  console.log({
-  expires_at: account.expires_at,
-  nowInSeconds,
-  isExpired,
-  hasAccessToken: !!account.access_token,
-});
 
   if (!forceRefresh && !isExpired && account.access_token) {
     return account.access_token;
@@ -74,7 +68,6 @@ export async function getValidGoogleAccessToken(
   });
 
 if (!response.ok) {
-  console.log(await response.text());
   throw new GoogleReauthRequiredError();
 }
 

@@ -6,6 +6,11 @@ import { auth } from "@/lib/auth";
 import { GoogleReauthRequiredError } from "@/lib/google-tokens";
 import { getEmailById, type InboxMessage } from "@/lib/gmail";
 import { analyzeEmail, type EmailAnalysis } from "@/lib/ai";
+import { ArchiveButton } from "../ArchiveButton";
+import { ReadStatusToggle } from "../ReadStatusToggle";
+import { SpamButton } from "../SpamButton";
+import { StarToggle } from "../StarToggle";
+import { TrashButton } from "../TrashButton";
 
 const PRIORITY_BADGE_STYLES: Record<EmailAnalysis["priority"], string> = {
   high: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
@@ -114,9 +119,18 @@ export default async function EmailDetailPage({
             : "border-l-zinc-200 dark:border-l-zinc-800"
         }`}
       >
-        <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-          {message.subject}
-        </h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
+            {message.subject}
+          </h1>
+          <div className="flex items-center gap-1">
+            <StarToggle messageId={message.id} isStarred={message.isStarred} />
+            <ReadStatusToggle messageId={message.id} isUnread={message.isUnread} />
+            <ArchiveButton messageId={message.id} />
+            <TrashButton messageId={message.id} />
+            <SpamButton messageId={message.id} />
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
           <span>{message.from}</span>
           <span aria-hidden="true">•</span>
