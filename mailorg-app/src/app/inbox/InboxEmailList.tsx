@@ -6,6 +6,7 @@ import Link from "next/link";
 import type { InboxMessage } from "@/lib/gmail";
 import type { EmailAnalysis } from "@/lib/ai";
 import { ArchiveButton } from "./ArchiveButton";
+import { loadMoreEmails } from "./actions";
 import { ReadStatusToggle } from "./ReadStatusToggle";
 import { SpamButton } from "./SpamButton";
 import { StarToggle } from "./StarToggle";
@@ -124,14 +125,51 @@ function EmailCard({
 
 export function InboxEmailList({
   emails,
+  nextPageToken: initialNextPageToken,
+  labelIds,
+  query,
+  analyze,
 }: {
   emails: { message: InboxMessage; analysis: EmailAnalysis | undefined }[];
+  nextPageToken?: string;
+  labelIds: string[];
+  query?: string;
+  analyze: boolean;
 }) {
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
+  const [items, setItems] = useState(emails);
+  const [nextPageToken, setNextPageToken] = useState(initialNextPageToken);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
-  const filtered = emails.filter(({ analysis }) =>
+  const filtered = items.filter(({ analysis }) =>
     matchesFilter(activeFilter, analysis)
   );
+
+  async function handleLoadMore() {
+    if (!nextPageToken) return;
+
+    setIsLoadingMore(true);
+    setLoadMoreError(null);
+
+    const result = await loadMoreEmails({
+      labelIds,
+      query,
+      pageToken: nextPageToken,
+      analyze,
+    });
+
+    setIsLoadingMore(false);
+
+    if (!result.success) {
+      setLoadMoreError(result.error);
+      return;
+    }
+
+    // Append the new page after what's already displayed - never replace.
+    setItems((prev) => [...prev, ...result.emails]);
+    setNextPageToken(result.nextPageToken);
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -162,6 +200,24 @@ export function InboxEmailList({
           {filtered.map(({ message, analysis }) => (
             <EmailCard key={message.id} message={message} analysis={analysis} />
           ))}
+        </div>
+      )}
+
+      {nextPageToken && (
+        <div className="flex flex-col items-center gap-2 pt-2">
+          <button
+            type="button"
+            onClick={handleLoadMore}
+            disabled={isLoadingMore}
+            className="rounded-full border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {isLoadingMore ? "Loading…" : "Load more"}
+          </button>
+          {loadMoreError && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              {loadMoreError}
+            </p>
+          )}
         </div>
       )}
     </div>

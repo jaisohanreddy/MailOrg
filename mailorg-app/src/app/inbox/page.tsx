@@ -25,10 +25,13 @@ export default async function InboxPage({
   const userId = session.user.id;
 
   let messages: InboxMessage[] = [];
+  let nextPageToken: string | undefined;
   let error: string | null = null;
 
   try {
-    messages = await listRecentEmails(userId, { query });
+    const result = await listRecentEmails(userId, { query });
+    messages = result.messages;
+    nextPageToken = result.nextPageToken;
   } catch (err) {
   console.error(err);
 
@@ -70,7 +73,15 @@ export default async function InboxPage({
           </p>
         )}
 
-        {!error && messages.length > 0 && <InboxEmailList emails={emails} />}
+        {!error && messages.length > 0 && (
+          <InboxEmailList
+            emails={emails}
+            nextPageToken={nextPageToken}
+            labelIds={["INBOX"]}
+            query={query}
+            analyze
+          />
+        )}
       </div>
     </div>
   );

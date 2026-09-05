@@ -16,6 +16,12 @@ export interface InboxMessage {
 
 interface GmailListResponse {
   messages?: { id: string }[];
+  nextPageToken?: string;
+}
+
+export interface ListEmailsResult {
+  messages: InboxMessage[];
+  nextPageToken?: string;
 }
 
 interface GmailMessageHeader {
@@ -184,22 +190,31 @@ function toInboxMessage(message: GmailMessageResponse): InboxMessage {
   };
 }
 
-// Fetches the user's most recent messages for the given Gmail label(s)
-// (INBOX by default), optionally constrained by a Gmail search query (the
-// same "q" syntax as Gmail's own search bar - passed through verbatim, no
-// custom parsing), including their decoded text body. No AI processing, no
-// write access for listing - read-only by design (see the gmail.readonly
-// scope requested in src/lib/auth.ts). Gmail remains the source of truth
-// for folder membership and search results; nothing here is duplicated
-// into the database.
+// Fetches one page of the user's most recent messages for the given Gmail
+// label(s) (INBOX by default), optionally constrained by a Gmail search
+// query (the same "q" syntax as Gmail's own search bar - passed through
+// verbatim, no custom parsing) and/or a Gmail pageToken to continue from a
+// previous page, including each message's decoded text body. Pagination is
+// performed entirely by Gmail - this never fetches more than one page or
+// slices an already-fetched array. No AI processing, no write access for
+// listing - read-only by design (see the gmail.readonly scope requested in
+// src/lib/auth.ts). Gmail remains the source of truth for folder
+// membership, search results, and paging; nothing here is duplicated into
+// the database.
 export async function listRecentEmails(
   userId: string,
   {
     maxResults = 10,
     labelIds = ["INBOX"],
     query,
-  }: { maxResults?: number; labelIds?: string[]; query?: string } = {}
-): Promise<InboxMessage[]> {
+    pageToken,
+  }: {
+    maxResults?: number;
+    labelIds?: string[];
+    query?: string;
+    pageToken?: string;
+  } = {}
+): Promise<ListEmailsResult> {
   const listUrl = new URL(`${GMAIL_API_BASE}/messages`);
   listUrl.searchParams.set("maxResults", String(maxResults));
   for (const labelId of labelIds) {
@@ -207,6 +222,9 @@ export async function listRecentEmails(
   }
   if (query) {
     listUrl.searchParams.set("q", query);
+  }
+  if (pageToken) {
+    listUrl.searchParams.set("pageToken", pageToken);
   }
 
   const listResponse = await fetchGmail(userId, listUrl);
@@ -217,7 +235,8 @@ export async function listRecentEmails(
     );
   }
 
-  const { messages = [] } = (await listResponse.json()) as GmailListResponse;
+  const { messages = [], nextPageToken } =
+    (await listResponse.json()) as GmailListResponse;
 
   const fullMessages = await Promise.all(
     messages.map(async ({ id }) => {
@@ -236,7 +255,7 @@ export async function listRecentEmails(
     })
   );
 
-  return fullMessages.map(toInboxMessage);
+  return { messages: fullMessages.map(toInboxMessage), nextPageToken };
 }
 
 // Fetches a single message by id, e.g. for the email detail page. Reuses

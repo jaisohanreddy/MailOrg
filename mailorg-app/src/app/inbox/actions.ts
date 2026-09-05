@@ -5,13 +5,24 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import {
   archiveEmail,
+  listRecentEmails,
   markEmailAsSpam,
   setEmailReadStatus,
   setEmailStarred,
   trashEmail,
+  type InboxMessage,
 } from "@/lib/gmail";
+import { analyzeEmails, type EmailAnalysis } from "@/lib/ai";
 
 type GmailActionResult = { success: true } | { success: false; error: string };
+
+type LoadMoreResult =
+  | {
+      success: true;
+      emails: { message: InboxMessage; analysis: EmailAnalysis | undefined }[];
+      nextPageToken?: string;
+    }
+  | { success: false; error: string };
 
 // Marks a message read/unread on the real Gmail account. Returns a typed
 // result instead of throwing so the calling UI can show a clean error
@@ -139,6 +150,60 @@ export async function markEmailAsSpamAction(
   revalidatePath(`/inbox/${messageId}`);
 
   return { success: true };
+}
+
+// Fetches the next Gmail page for a given folder/query (a genuine
+// server-side Gmail page fetch via pageToken, never a slice of an
+// already-fetched array). The caller is responsible for appending the
+// returned emails to what's already displayed - this only ever returns
+// one new page. When `analyze` is true (Inbox only), runs AI analysis on
+// just this new batch, reusing the existing per-message cache exactly as
+// the initial page load does; already-displayed/cached messages are never
+// touched since they're never included in this call's `messages`.
+export async function loadMoreEmails({
+  labelIds,
+  query,
+  pageToken,
+  analyze,
+}: {
+  labelIds: string[];
+  query?: string;
+  pageToken: string;
+  analyze: boolean;
+}): Promise<LoadMoreResult> {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    return { success: false, error: "You need to be signed in to do that." };
+  }
+
+  try {
+    const { messages, nextPageToken } = await listRecentEmails(
+      session.user.id,
+      { labelIds, query, pageToken }
+    );
+
+    const analysisByMessageId =
+      analyze && messages.length > 0
+        ? await analyzeEmails(messages, session.user.id)
+        : new Map<string, EmailAnalysis>();
+
+    const emails = messages.map((message) => ({
+      message,
+      analysis: analysisByMessageId.get(message.id),
+    }));
+
+    return { success: true, emails, nextPageToken };
+  } catch (err) {
+    console.error(
+      "Failed to load more emails:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return {
+      success: false,
+      error: "Couldn't load more emails. Please try again.",
+    };
+  }
 }
 
 // Stars/unstars a message on the real Gmail account. Same pattern as
