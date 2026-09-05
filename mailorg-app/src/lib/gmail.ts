@@ -6,8 +6,10 @@ const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 export interface InboxMessage {
   id: string;
+  threadId: string;
   subject: string;
   from: string;
+  to: string;
   date: string;
   body: string;
   isUnread: boolean;
@@ -31,6 +33,7 @@ interface GmailMessageHeader {
 
 interface GmailMessageResponse {
   id: string;
+  threadId?: string;
   internalDate?: string;
   snippet?: string;
   labelIds?: string[];
@@ -179,8 +182,10 @@ function extractBody(payload: GmailMessageResponse["payload"]): string {
 function toInboxMessage(message: GmailMessageResponse): InboxMessage {
   return {
     id: message.id,
+    threadId: message.threadId ?? message.id,
     subject: getHeader(message.payload?.headers, "Subject"),
     from: getHeader(message.payload?.headers, "From"),
+    to: getHeader(message.payload?.headers, "To"),
     date: message.internalDate
       ? new Date(Number(message.internalDate)).toLocaleString()
       : "(unknown)",
@@ -283,6 +288,54 @@ export async function getEmailById(
 
   const message = (await messageResponse.json()) as GmailMessageResponse;
   return toInboxMessage(message);
+}
+
+export interface EmailThread {
+  id: string;
+  messages: InboxMessage[];
+}
+
+// Fetches the full Gmail conversation a message belongs to via Gmail's
+// native threads.get endpoint - Gmail is the source of truth for thread
+// membership and ordering, so this never fetches the mailbox and groups
+// messages itself. Reuses the same message shape/parsing as
+// listRecentEmails/getEmailById via toInboxMessage. Returns null if the
+// thread doesn't exist (or isn't accessible), matching getEmailById's
+// not-found convention. Messages are defensively sorted by internalDate
+// ascending (oldest first) - Gmail already returns them in this order, but
+// sorting guards against relying on unspecified API behavior.
+export async function getEmailThread(
+  userId: string,
+  threadId: string
+): Promise<EmailThread | null> {
+  const threadUrl = new URL(`${GMAIL_API_BASE}/threads/${threadId}`);
+  threadUrl.searchParams.set("format", "full");
+
+  const threadResponse = await fetchGmail(userId, threadUrl);
+
+  if (threadResponse.status === 404) {
+    return null;
+  }
+
+  if (!threadResponse.ok) {
+    throw new Error(
+      `Gmail API error while fetching thread ${threadId}: ${threadResponse.status}`
+    );
+  }
+
+  const thread = (await threadResponse.json()) as {
+    id: string;
+    messages?: GmailMessageResponse[];
+  };
+
+  const orderedMessages = (thread.messages ?? [])
+    .slice()
+    .sort((a, b) => Number(a.internalDate ?? 0) - Number(b.internalDate ?? 0));
+
+  return {
+    id: thread.id,
+    messages: orderedMessages.map(toInboxMessage),
+  };
 }
 
 // Adds/removes Gmail labels on a message via the messages.modify endpoint -

@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 
 import { auth } from "@/lib/auth";
 import { GoogleReauthRequiredError } from "@/lib/google-tokens";
-import { getEmailById, type InboxMessage } from "@/lib/gmail";
+import { getEmailById, getEmailThread, type InboxMessage } from "@/lib/gmail";
 import { analyzeEmail, type EmailAnalysis } from "@/lib/ai";
 import { ArchiveButton } from "../ArchiveButton";
 import { ReadStatusToggle } from "../ReadStatusToggle";
@@ -65,6 +65,22 @@ export default async function EmailDetailPage({
         : "We couldn't load this email right now. Please try again shortly.";
   }
 
+  // The thread is fetched purely for display - if it fails, fall back to
+  // showing just the single opened message rather than a full-page error,
+  // since the message itself already loaded successfully.
+  let threadMessages: InboxMessage[] = message ? [message] : [];
+
+  if (message) {
+    try {
+      const thread = await getEmailThread(userId, message.threadId);
+      if (thread && thread.messages.length > 0) {
+        threadMessages = thread.messages;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   let analysis: EmailAnalysis | null = null;
   let analysisError: string | null = null;
 
@@ -105,8 +121,6 @@ export default async function EmailDetailPage({
       </div>
     );
   }
-
-  const bodyText = message.body || "(no body extracted)";
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-10 sm:px-12">
@@ -191,11 +205,44 @@ export default async function EmailDetailPage({
 
       <section className="flex flex-col gap-3 rounded-xl border border-black/[.08] bg-white p-6 dark:border-white/[.08] dark:bg-zinc-950">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Message
+          Conversation
+          {threadMessages.length > 1 && ` (${threadMessages.length} messages)`}
         </h2>
-        <p className="whitespace-pre-wrap break-words text-sm leading-6 text-zinc-700 dark:text-zinc-300">
-          {bodyText}
-        </p>
+
+        <div className="flex flex-col gap-4">
+          {threadMessages.map((threadMessage) => {
+            const isOpenedMessage = threadMessage.id === message.id;
+            const threadMessageBody =
+              threadMessage.body || "(no body extracted)";
+
+            return (
+              <div
+                key={threadMessage.id}
+                className={`flex flex-col gap-2 rounded-lg border p-4 ${
+                  isOpenedMessage
+                    ? "border-blue-200 bg-blue-50/50 dark:border-blue-900/50 dark:bg-blue-900/10"
+                    : "border-black/[.08] dark:border-white/[.08]"
+                }`}
+              >
+                <div className="flex flex-col gap-1 text-sm text-zinc-500 dark:text-zinc-400">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                      {threadMessage.from}
+                    </span>
+                    <span aria-hidden="true">•</span>
+                    <span>{threadMessage.date}</span>
+                  </div>
+                  <span className="text-xs text-zinc-400 dark:text-zinc-600">
+                    To: {threadMessage.to}
+                  </span>
+                </div>
+                <p className="whitespace-pre-wrap break-words text-sm leading-6 text-zinc-700 dark:text-zinc-300">
+                  {threadMessageBody}
+                </p>
+              </div>
+            );
+          })}
+        </div>
       </section>
     </div>
   );
