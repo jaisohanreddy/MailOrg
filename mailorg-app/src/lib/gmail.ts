@@ -4,6 +4,20 @@ import { getValidGoogleAccessToken } from "@/lib/google-tokens";
 
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
+// Identified by partId (a part's stable position in the MIME tree, e.g.
+// "1" or "0.1"), not Gmail's attachmentId - Gmail mints a fresh attachmentId
+// on every messages.get call, so one captured at page-render time is no
+// longer valid by the time a later download request re-fetches the message.
+// partId stays the same across fetches, so it's what the UI/download route
+// use to identify "this attachment", with the actual (current) attachmentId
+// resolved fresh at download time.
+export interface AttachmentMeta {
+  partId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface InboxMessage {
   id: string;
   threadId: string;
@@ -14,6 +28,7 @@ export interface InboxMessage {
   body: string;
   isUnread: boolean;
   isStarred: boolean;
+  attachments: AttachmentMeta[];
 }
 
 interface GmailListResponse {
@@ -38,9 +53,13 @@ interface GmailMessageResponse {
   snippet?: string;
   labelIds?: string[];
   payload?: {
+    partId?: string;
     mimeType?: string;
+    filename?: string;
     headers?: GmailMessageHeader[];
     body?: {
+      attachmentId?: string;
+      size?: number;
       data?: string;
     };
     parts?: GmailMessagePart[];
@@ -48,8 +67,12 @@ interface GmailMessageResponse {
 }
 
 interface GmailMessagePart {
+  partId?: string;
   mimeType?: string;
+  filename?: string;
   body?: {
+    attachmentId?: string;
+    size?: number;
     data?: string;
   };
   parts?: GmailMessagePart[];
@@ -176,6 +199,56 @@ function extractBody(payload: GmailMessageResponse["payload"]): string {
   return "";
 }
 
+// Internal shape used only while resolving a download - includes the
+// current-fetch's attachmentId, unlike the public AttachmentMeta which
+// deliberately omits it (see AttachmentMeta's comment).
+interface AttachmentPart {
+  partId: string;
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+// Recursively walks Gmail's nested MIME part tree collecting attachments.
+// A part is only treated as a downloadable attachment when Gmail provides
+// a filename and an attachmentId - inline text/html body parts carry their
+// data directly (no attachmentId) and multipart containers (mixed/
+// alternative/related) carry neither, so both are naturally skipped while
+// recursion continues into their children.
+function findAttachmentParts(
+  part: GmailMessageResponse["payload"] | GmailMessagePart | undefined
+): AttachmentPart[] {
+  if (!part) return [];
+
+  const attachments: AttachmentPart[] = [];
+
+  if (part.filename && part.body?.attachmentId) {
+    attachments.push({
+      partId: part.partId ?? "",
+      attachmentId: part.body.attachmentId,
+      filename: part.filename,
+      mimeType: part.mimeType || "application/octet-stream",
+      size: part.body.size ?? 0,
+    });
+  }
+
+  for (const child of part.parts ?? []) {
+    attachments.push(...findAttachmentParts(child));
+  }
+
+  return attachments;
+}
+
+function toAttachmentMeta(part: AttachmentPart): AttachmentMeta {
+  return {
+    partId: part.partId,
+    filename: part.filename,
+    mimeType: part.mimeType,
+    size: part.size,
+  };
+}
+
 // Shared mapping from the raw Gmail message shape to our InboxMessage type,
 // reused by both listRecentEmails and getEmailById so header/body parsing
 // only lives in one place.
@@ -192,6 +265,7 @@ function toInboxMessage(message: GmailMessageResponse): InboxMessage {
     body: extractBody(message.payload),
     isUnread: (message.labelIds ?? []).includes("UNREAD"),
     isStarred: (message.labelIds ?? []).includes("STARRED"),
+    attachments: findAttachmentParts(message.payload).map(toAttachmentMeta),
   };
 }
 
@@ -335,6 +409,81 @@ export async function getEmailThread(
   return {
     id: thread.id,
     messages: orderedMessages.map(toInboxMessage),
+  };
+}
+
+export interface AttachmentContent {
+  filename: string;
+  mimeType: string;
+  data: Buffer;
+}
+
+// Downloads one attachment's bytes for a given message, identified by
+// partId rather than Gmail's attachmentId (see AttachmentMeta's comment -
+// attachmentId is minted fresh per messages.get call, so a value captured
+// at page-render time is already stale by the time a download is clicked).
+// Refetches the message first to confirm the requested partId genuinely
+// belongs to this message, to source a currently-valid attachmentId for it,
+// and to get the filename/mimeType Gmail's attachments.get response itself
+// doesn't include. Returns null if the message, or a matching attachment on
+// it, doesn't exist/isn't accessible to this user.
+export async function getAttachment(
+  userId: string,
+  messageId: string,
+  partId: string
+): Promise<AttachmentContent | null> {
+  const messageUrl = new URL(`${GMAIL_API_BASE}/messages/${messageId}`);
+  messageUrl.searchParams.set("format", "full");
+
+  const messageResponse = await fetchGmail(userId, messageUrl);
+
+  if (messageResponse.status === 404) {
+    return null;
+  }
+
+  if (!messageResponse.ok) {
+    throw new Error(
+      `Gmail API error while fetching message ${messageId}: ${messageResponse.status}`
+    );
+  }
+
+  const message = (await messageResponse.json()) as GmailMessageResponse;
+  const meta = findAttachmentParts(message.payload).find(
+    (attachment) => attachment.partId === partId
+  );
+
+  if (!meta) {
+    return null;
+  }
+
+  const attachmentUrl = new URL(
+    `${GMAIL_API_BASE}/messages/${messageId}/attachments/${meta.attachmentId}`
+  );
+
+  const attachmentResponse = await fetchGmail(userId, attachmentUrl);
+
+  if (attachmentResponse.status === 404) {
+    return null;
+  }
+
+  if (!attachmentResponse.ok) {
+    throw new Error(
+      `Gmail API error while fetching attachment part ${partId} on message ${messageId}: ${attachmentResponse.status}`
+    );
+  }
+
+  const body = (await attachmentResponse.json()) as { data?: string };
+
+  if (!body.data) {
+    return null;
+  }
+
+  const base64 = body.data.replace(/-/g, "+").replace(/_/g, "/");
+
+  return {
+    filename: meta.filename,
+    mimeType: meta.mimeType,
+    data: Buffer.from(base64, "base64"),
   };
 }
 

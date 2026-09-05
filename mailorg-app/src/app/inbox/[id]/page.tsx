@@ -25,6 +25,13 @@ const PRIORITY_BORDER_STYLES: Record<EmailAnalysis["priority"], string> = {
   low: "border-l-zinc-300 dark:border-l-zinc-700",
 };
 
+function formatFileSize(bytes: number): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function BackToInbox() {
   return (
     <Link
@@ -239,6 +246,37 @@ export default async function EmailDetailPage({
                 <p className="whitespace-pre-wrap break-words text-sm leading-6 text-zinc-700 dark:text-zinc-300">
                   {threadMessageBody}
                 </p>
+
+                {threadMessage.attachments.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-2 border-t border-black/[.08] pt-3 dark:border-white/[.08]">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                      Attachments
+                    </h3>
+                    <ul className="flex flex-col gap-1.5">
+                      {threadMessage.attachments.map((attachment) => (
+                        <li
+                          key={attachment.partId}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-black/[.08] bg-zinc-50 px-3 py-2 text-sm dark:border-white/[.08] dark:bg-zinc-900"
+                        >
+                          <span className="truncate text-zinc-700 dark:text-zinc-300">
+                            {attachment.filename}
+                            {attachment.size > 0 && (
+                              <span className="ml-2 text-xs text-zinc-400 dark:text-zinc-600">
+                                {formatFileSize(attachment.size)}
+                              </span>
+                            )}
+                          </span>
+                          <a
+                            href={`/api/attachments/${threadMessage.id}/${attachment.partId}`}
+                            className="shrink-0 rounded-full border border-zinc-200 px-3 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                          >
+                            Download
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             );
           })}
