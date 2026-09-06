@@ -5,6 +5,7 @@ import { GoogleReauthRequiredError } from "@/lib/google-tokens";
 import { listRecentEmails, type InboxMessage } from "@/lib/gmail";
 import { FolderNav } from "./FolderNav";
 import { InboxEmailList } from "./InboxEmailList";
+import { ReconnectGoogleButton } from "./ReconnectGoogleButton";
 import { SearchBar } from "./SearchBar";
 
 // Shared implementation for every non-Inbox folder (Sent/Drafts/Spam/Trash).
@@ -37,6 +38,7 @@ export async function SimpleFolderPage({
   let messages: InboxMessage[] = [];
   let nextPageToken: string | undefined;
   let error: string | null = null;
+  let needsReconnect = false;
 
   try {
     const result = await listRecentEmails(userId, { labelIds: [label], query });
@@ -45,10 +47,8 @@ export async function SimpleFolderPage({
   } catch (err) {
     console.error(err);
 
-    error =
-      err instanceof GoogleReauthRequiredError
-        ? reconnectMessage
-        : loadErrorMessage;
+    needsReconnect = err instanceof GoogleReauthRequiredError;
+    error = needsReconnect ? reconnectMessage : loadErrorMessage;
   }
 
   const emails = messages.map((message) => ({
@@ -69,7 +69,10 @@ export async function SimpleFolderPage({
         </div>
 
         {error && (
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            {needsReconnect && <ReconnectGoogleButton />}
+          </div>
         )}
 
         {!error && messages.length === 0 && (

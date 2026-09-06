@@ -15,6 +15,7 @@ import { ArchiveButton } from "../ArchiveButton";
 import { getEmailImportanceFeedback } from "../actions";
 import { EmailFeedbackControl } from "../EmailFeedbackControl";
 import { ReadStatusToggle } from "../ReadStatusToggle";
+import { ReconnectGoogleButton } from "../ReconnectGoogleButton";
 import { SpamButton } from "../SpamButton";
 import { StarToggle } from "../StarToggle";
 import { TrashButton } from "../TrashButton";
@@ -98,16 +99,17 @@ export default async function EmailDetailPage({
 
   let message: InboxMessage | null = null;
   let error: string | null = null;
+  let needsReconnect = false;
 
   try {
     message = await getEmailById(userId, id);
   } catch (err) {
     console.error(err);
 
-    error =
-      err instanceof GoogleReauthRequiredError
-        ? "Your Google account needs to be reconnected to load this email."
-        : "We couldn't load this email right now. Please try again shortly.";
+    needsReconnect = err instanceof GoogleReauthRequiredError;
+    error = needsReconnect
+      ? "Your Google account needs to be reconnected to load this email."
+      : "We couldn't load this email right now. Please try again shortly.";
   }
 
   // The thread is fetched purely for display - if it fails, fall back to
@@ -177,7 +179,10 @@ export default async function EmailDetailPage({
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-10 sm:px-12">
         <BackToInbox />
-        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+          {needsReconnect && <ReconnectGoogleButton />}
+        </div>
       </div>
     );
   }

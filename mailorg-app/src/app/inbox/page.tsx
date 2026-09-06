@@ -6,6 +6,7 @@ import { listRecentEmails, type InboxMessage } from "@/lib/gmail";
 import { analyzeEmails, type EmailAnalysis } from "@/lib/ai";
 import { FolderNav } from "./FolderNav";
 import { InboxEmailList } from "./InboxEmailList";
+import { ReconnectGoogleButton } from "./ReconnectGoogleButton";
 import { SearchBar } from "./SearchBar";
 
 export default async function InboxPage({
@@ -27,19 +28,20 @@ export default async function InboxPage({
   let messages: InboxMessage[] = [];
   let nextPageToken: string | undefined;
   let error: string | null = null;
+  let needsReconnect = false;
 
   try {
     const result = await listRecentEmails(userId, { query });
     messages = result.messages;
     nextPageToken = result.nextPageToken;
   } catch (err) {
-  console.error(err);
+    console.error(err);
 
-  error =
-    err instanceof GoogleReauthRequiredError
+    needsReconnect = err instanceof GoogleReauthRequiredError;
+    error = needsReconnect
       ? "Your Google account needs to be reconnected to load your inbox."
       : "We couldn't load your inbox right now. Please try again shortly.";
-}
+  }
 
   const analysisByMessageId =
     !error && messages.length > 0
@@ -64,7 +66,10 @@ export default async function InboxPage({
         </div>
 
         {error && (
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            {needsReconnect && <ReconnectGoogleButton />}
+          </div>
         )}
 
         {!error && messages.length === 0 && (
