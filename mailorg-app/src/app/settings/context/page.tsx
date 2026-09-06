@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
 import { FolderNav } from "@/app/inbox/FolderNav";
-import { getUserContext } from "./actions";
+import { getUserContext, type UserContextRecord } from "./actions";
 import { ContextForm } from "./ContextForm";
 
 export default async function UserContextPage() {
@@ -12,11 +12,11 @@ export default async function UserContextPage() {
     redirect("/sign-in");
   }
 
-  let contextText: string | null = null;
+  let record: UserContextRecord | null = null;
   let error: string | null = null;
 
   try {
-    contextText = await getUserContext();
+    record = await getUserContext();
   } catch (err) {
     console.error(err);
     error =
@@ -42,7 +42,10 @@ export default async function UserContextPage() {
           <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
         )}
 
-        <ContextForm initialContext={contextText} />
+        <ContextForm
+          initialContext={record?.contextText ?? null}
+          initialInterpretation={record?.interpretedContext ?? null}
+        />
       </div>
     </div>
   );

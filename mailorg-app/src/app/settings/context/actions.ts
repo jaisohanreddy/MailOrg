@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 
 import { auth } from "@/lib/auth";
+import { interpretUserContext, type UserContextInterpretation } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 
 const MAX_CONTEXT_LENGTH = 4000;
 
@@ -11,10 +13,33 @@ type ContextActionResult =
   | { success: true }
   | { success: false; error: string };
 
+export interface UserContextRecord {
+  contextText: string;
+  interpretedContext: UserContextInterpretation | null;
+}
+
+function isValidStoredInterpretation(
+  value: unknown
+): value is UserContextInterpretation {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  const isStringArray = (x: unknown) =>
+    Array.isArray(x) && x.every((item) => typeof item === "string");
+
+  return (
+    isStringArray(v.goals) &&
+    isStringArray(v.priorities) &&
+    isStringArray(v.lowPrioritySignals) &&
+    isStringArray(v.currentContext)
+  );
+}
+
 // Reads the current user's context (never another user's - userId always
 // comes from the session, never a caller-supplied argument). Returns null
-// if the user has no context saved yet, not an error.
-export async function getUserContext(): Promise<string | null> {
+// if the user has no context saved yet, not an error. interpretedContext
+// is null both when the user has no context yet and for older rows saved
+// before interpretation existed - either way there's nothing to show.
+export async function getUserContext(): Promise<UserContextRecord | null> {
   const session = await auth();
 
   if (!session?.user?.id) {
@@ -25,12 +50,28 @@ export async function getUserContext(): Promise<string | null> {
     where: { userId: session.user.id },
   });
 
-  return record?.contextText ?? null;
+  if (!record) {
+    return null;
+  }
+
+  return {
+    contextText: record.contextText,
+    interpretedContext: isValidStoredInterpretation(record.interpretedContext)
+      ? record.interpretedContext
+      : null,
+  };
 }
 
 // Creates or updates the current user's context. Validates server-side
 // regardless of any client-side checks: must be a non-empty string (after
 // trimming) within MAX_CONTEXT_LENGTH. The raw text is never logged.
+//
+// contextText and interpretedContext are always written together in one
+// upsert, and only after interpretation succeeds - never separately. If
+// interpretUserContext throws (API error, malformed output, failed
+// validation), the save fails as a whole: the previous valid contextText
+// and interpretedContext in the database are left untouched rather than
+// risking the two falling out of sync.
 export async function saveUserContext(
   contextText: string
 ): Promise<ContextActionResult> {
@@ -57,11 +98,32 @@ export async function saveUserContext(
     };
   }
 
+  let interpretedContext: UserContextInterpretation;
+  try {
+    interpretedContext = await interpretUserContext(trimmed);
+  } catch (err) {
+    console.error(
+      "Failed to interpret user context:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return {
+      success: false,
+      error: "Couldn't understand your context right now. Please try again.",
+    };
+  }
+
+  const interpretedContextJson =
+    interpretedContext as unknown as Prisma.InputJsonValue;
+
   try {
     await prisma.userContext.upsert({
       where: { userId: session.user.id },
-      create: { userId: session.user.id, contextText: trimmed },
-      update: { contextText: trimmed },
+      create: {
+        userId: session.user.id,
+        contextText: trimmed,
+        interpretedContext: interpretedContextJson,
+      },
+      update: { contextText: trimmed, interpretedContext: interpretedContextJson },
     });
   } catch (err) {
     console.error(

@@ -94,6 +94,12 @@ model UserContext {
 
   contextText String @db.Text
 
+  // AI-derived interpretation of contextText (goals/priorities/
+  // lowPrioritySignals/currentContext - see src/lib/ai.ts), always written
+  // together with contextText so the two never disagree. Null only for
+  // rows saved before this interpretation step existed.
+  interpretedContext Json?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())

@@ -233,6 +233,122 @@ export async function analyzeEmail(
   }
 }
 
+export interface UserContextInterpretation {
+  goals: string[];
+  priorities: string[];
+  lowPrioritySignals: string[];
+  currentContext: string[];
+}
+
+const USER_CONTEXT_INTERPRETATION_SCHEMA = {
+  type: "object",
+  properties: {
+    goals: { type: "array", items: { type: "string" } },
+    priorities: { type: "array", items: { type: "string" } },
+    lowPrioritySignals: { type: "array", items: { type: "string" } },
+    currentContext: { type: "array", items: { type: "string" } },
+  },
+  required: ["goals", "priorities", "lowPrioritySignals", "currentContext"],
+  additionalProperties: false,
+};
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isValidUserContextInterpretation(
+  value: unknown
+): value is UserContextInterpretation {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+
+  return (
+    isStringArray(v.goals) &&
+    isStringArray(v.priorities) &&
+    isStringArray(v.lowPrioritySignals) &&
+    isStringArray(v.currentContext)
+  );
+}
+
+// Interprets a user's own natural-language UserContext.contextText into a
+// small structured shape MailOrg can later use for personalization. Unlike
+// analyzeEmail, this never falls back to a neutral default - a wrong or
+// invented interpretation of what the user says matters to them is worse
+// than no interpretation at all, so any failure here is thrown and the
+// caller (saveUserContext) is expected to fail the whole save rather than
+// persist mismatched or fabricated data.
+export async function interpretUserContext(
+  contextText: string
+): Promise<UserContextInterpretation> {
+  let response;
+
+  try {
+    response = await client.responses.create({
+      model: MODEL,
+      instructions:
+        "You are interpreting a MailOrg user's own natural-language " +
+        "description of what currently matters to them. Extract only " +
+        "information directly supported by their text. Do not invent " +
+        "facts, preferences, or details the user did not state, and do " +
+        "not guess what someone in their situation might typically care " +
+        "about. Do not give advice. Do not rewrite or embellish the " +
+        "user's words into a nicer-sounding version - keep entries close " +
+        "to what they actually said, just concise. Do not classify or " +
+        "reference any emails. Do not infer demographic, personal, or " +
+        "other sensitive attributes that were not explicitly stated. " +
+        "Separate what you find into four lists: goals (things the user " +
+        "says they are trying to accomplish), priorities (topics, " +
+        "senders, or kinds of messages the user says matter to them), " +
+        "lowPrioritySignals (topics or kinds of messages the user says " +
+        "matter less or should be deprioritized), and currentContext " +
+        "(the user's current situation or circumstance, if stated). If " +
+        "the text does not support a given list, return an empty array " +
+        "for it - never fill a list with speculation. Prefer fewer, " +
+        "accurate entries over many speculative ones.",
+      input: contextText,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "user_context_interpretation",
+          schema: USER_CONTEXT_INTERPRETATION_SCHEMA,
+          strict: true,
+        },
+      },
+    });
+  } catch (err) {
+    // Only log categorical fields (HTTP status, error code) - never err.message.
+    // Provider error messages can echo back fragments of the request (OpenAI's
+    // own invalid-API-key error, for instance, includes a masked copy of the
+    // key that was sent), so message text isn't safe metadata here even though
+    // analyzeEmail's lower-stakes email-triage errors log it.
+    const status =
+      err && typeof err === "object" && "status" in err
+        ? (err as { status?: unknown }).status
+        : undefined;
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+    console.error("User context interpretation failed:", { status, code });
+    throw new Error("Couldn't understand your context right now.");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(response.output_text);
+  } catch {
+    console.error("User context interpretation returned malformed JSON.");
+    throw new Error("Couldn't understand your context right now.");
+  }
+
+  if (!isValidUserContextInterpretation(parsed)) {
+    console.error("User context interpretation failed schema validation.");
+    throw new Error("Couldn't understand your context right now.");
+  }
+
+  return parsed;
+}
+
 // Analyzes multiple emails in parallel, keyed by message id. Individual
 // failures (already caught inside analyzeEmail) fall back to a neutral
 // result rather than rejecting the whole batch.
