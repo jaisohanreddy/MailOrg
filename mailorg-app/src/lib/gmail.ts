@@ -493,6 +493,119 @@ export async function getAttachment(
   };
 }
 
+// Strips CR/LF from a header value before it's embedded in a hand-built
+// RFC 2822 message - without this, a value containing a newline could
+// inject additional headers into the raw message.
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+// Sends a plain-text reply to an existing Gmail message via messages.send,
+// threading it into the same Gmail conversation via threadId plus the
+// standard In-Reply-To/References headers. Requires the gmail.send scope
+// (see src/lib/auth.ts) - gmail.modify alone does not permit sending.
+//
+// Re-fetches the original message fresh (metadata only, not the full
+// body) rather than trusting any caller-supplied header/subject/thread
+// values, so the recipient/subject/threading are always derived from
+// Gmail's own current state, not something the browser could influence.
+export async function sendReply(
+  userId: string,
+  messageId: string,
+  body: string
+): Promise<void> {
+  const messageUrl = new URL(`${GMAIL_API_BASE}/messages/${messageId}`);
+  messageUrl.searchParams.set("format", "metadata");
+  for (const header of [
+    "Subject",
+    "From",
+    "Reply-To",
+    "Message-ID",
+    "References",
+  ]) {
+    messageUrl.searchParams.append("metadataHeaders", header);
+  }
+
+  const messageResponse = await fetchGmail(userId, messageUrl);
+
+  if (messageResponse.status === 404) {
+    throw new Error(`Message ${messageId} not found`);
+  }
+
+  if (!messageResponse.ok) {
+    throw new Error(
+      `Gmail API error while fetching message ${messageId} for reply: ${messageResponse.status}`
+    );
+  }
+
+  const original = (await messageResponse.json()) as GmailMessageResponse;
+  const threadId = original.threadId ?? messageId;
+  const headers = original.payload?.headers;
+
+  const originalSubject = getHeader(headers, "Subject");
+  const subject =
+    originalSubject === "(unknown)"
+      ? "Re:"
+      : /^re:/i.test(originalSubject.trim())
+        ? originalSubject
+        : `Re: ${originalSubject}`;
+
+  // Reply-To takes precedence over From when present, per normal reply
+  // conventions - the sender may want replies routed elsewhere.
+  const replyTo = getHeader(headers, "Reply-To");
+  const from = getHeader(headers, "From");
+  const recipient = replyTo !== "(unknown)" ? replyTo : from;
+
+  if (recipient === "(unknown)") {
+    throw new Error(
+      `Could not determine a reply recipient for message ${messageId}`
+    );
+  }
+
+  const originalMessageIdHeader = getHeader(headers, "Message-ID");
+  const originalReferences = getHeader(headers, "References");
+  const references =
+    originalMessageIdHeader === "(unknown)"
+      ? undefined
+      : originalReferences === "(unknown)"
+        ? originalMessageIdHeader
+        : `${originalReferences} ${originalMessageIdHeader}`;
+
+  const headerLines = [
+    `To: ${sanitizeHeaderValue(recipient)}`,
+    `Subject: ${sanitizeHeaderValue(subject)}`,
+    ...(originalMessageIdHeader !== "(unknown)"
+      ? [`In-Reply-To: ${sanitizeHeaderValue(originalMessageIdHeader)}`]
+      : []),
+    ...(references ? [`References: ${sanitizeHeaderValue(references)}`] : []),
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset="UTF-8"`,
+    `Content-Transfer-Encoding: 8bit`,
+  ];
+
+  // From is deliberately omitted - Gmail fills it in with the
+  // authenticated account's own address when not set.
+  const rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${body}`;
+  const encodedMessage = Buffer.from(rawMessage, "utf-8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  const sendUrl = new URL(`${GMAIL_API_BASE}/messages/send`);
+  const sendResponse = await fetchGmail(userId, sendUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw: encodedMessage, threadId }),
+  });
+
+  if (!sendResponse.ok) {
+    throw new Error(
+      `Gmail API error while sending reply to message ${messageId}: ${sendResponse.status}`
+    );
+  }
+}
+
 // Adds/removes Gmail labels on a message via the messages.modify endpoint -
 // the shared primitive behind read/unread, starring, and any future
 // label-based mutation (archive, trash, spam, ...). Requires gmail.modify.

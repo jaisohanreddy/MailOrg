@@ -16,6 +16,7 @@ import { getEmailImportanceFeedback } from "../actions";
 import { EmailFeedbackControl } from "../EmailFeedbackControl";
 import { ReadStatusToggle } from "../ReadStatusToggle";
 import { ReconnectGoogleButton } from "../ReconnectGoogleButton";
+import { ReplyComposer } from "../ReplyComposer";
 import { SpamButton } from "../SpamButton";
 import { StarToggle } from "../StarToggle";
 import { TrashButton } from "../TrashButton";
@@ -379,6 +380,8 @@ export default async function EmailDetailPage({
           })}
         </div>
       </section>
+
+      <ReplyComposer messageId={message.id} />
     </div>
   );
 }

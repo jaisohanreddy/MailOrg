@@ -25,6 +25,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // the user's very first consent.
           access_type: "offline",
           prompt: "consent",
+          // gmail.modify already covers messages.send - confirmed
+          // empirically against the real account (a real reply sent
+          // successfully with a token whose stored scope was only
+          // gmail.readonly + gmail.modify, no gmail.send). No scope change
+          // was needed for the Reply feature.
           scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",
         },
       },

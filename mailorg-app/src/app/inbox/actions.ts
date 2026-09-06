@@ -7,6 +7,7 @@ import {
   archiveEmail,
   listRecentEmails,
   markEmailAsSpam,
+  sendReply,
   setEmailReadStatus,
   setEmailStarred,
   trashEmail,
@@ -310,4 +311,45 @@ export async function getEmailImportanceFeedback(
   });
 
   return record?.decision ?? null;
+}
+
+// Sends a plain-text reply to an existing Gmail message, threaded into the
+// same conversation. Validates inputs server-side regardless of any
+// client-side checks; messageId/body are never trusted as authoritative
+// from the browser beyond identifying what to reply to and what to say -
+// the actual recipient/subject/threading are re-derived from Gmail itself
+// inside sendReply.
+export async function sendReplyAction(
+  messageId: string,
+  body: string
+): Promise<GmailActionResult> {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    return { success: false, error: "You need to be signed in to do that." };
+  }
+
+  if (typeof messageId !== "string" || !messageId.trim()) {
+    return { success: false, error: "A valid email is required." };
+  }
+
+  if (typeof body !== "string" || !body.trim()) {
+    return { success: false, error: "Reply can't be empty." };
+  }
+
+  try {
+    await sendReply(session.user.id, messageId, body.trim());
+  } catch (err) {
+    console.error(
+      "Failed to send reply:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return {
+      success: false,
+      error: "Couldn't send your reply. Please try again.",
+    };
+  }
+
+  revalidatePath(`/inbox/${messageId}`);
+  return { success: true };
 }
