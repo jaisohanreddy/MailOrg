@@ -3,6 +3,7 @@ import Link from "next/link";
 const FOLDERS = [
   { href: "/inbox", label: "Inbox" },
   { href: "/important", label: "Important for you" },
+  { href: "/needs-input", label: "Needs your input" },
   { href: "/sent", label: "Sent" },
   { href: "/drafts", label: "Drafts" },
   { href: "/spam", label: "Spam" },

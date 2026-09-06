@@ -11,6 +11,7 @@ const PROTECTED_PREFIXES = [
   "/dashboard",
   "/inbox",
   "/important",
+  "/needs-input",
   "/sent",
   "/drafts",
   "/spam",
