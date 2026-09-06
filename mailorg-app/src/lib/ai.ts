@@ -362,6 +362,29 @@ export interface PersonalizedAnalysisResult {
   reason: string;
 }
 
+// Shared display constants for PersonalizedAnalysisResult.importance, so
+// every view that shows this (the email detail page, the Important for
+// you list) uses the same label/color rather than each inventing its own.
+export const PERSONALIZED_BADGE_STYLES: Record<
+  PersonalizedAnalysisResult["importance"],
+  string
+> = {
+  IMPORTANT:
+    "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  NOT_IMPORTANT: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+  UNCERTAIN:
+    "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+};
+
+export const PERSONALIZED_BADGE_LABELS: Record<
+  PersonalizedAnalysisResult["importance"],
+  string
+> = {
+  IMPORTANT: "Important to you",
+  NOT_IMPORTANT: "Not important",
+  UNCERTAIN: "Uncertain",
+};
+
 const PERSONALIZED_IMPORTANCE_SCHEMA = {
   type: "object",
   properties: {

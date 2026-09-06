@@ -47,12 +47,14 @@ function matchesFilter(
   return analysis.priority === filter;
 }
 
-function EmailCard({
+export function EmailCard({
   message,
   analysis,
+  personalizedBadge,
 }: {
   message: InboxMessage;
   analysis: EmailAnalysis | undefined;
+  personalizedBadge?: React.ReactNode;
 }) {
   const bodyPreview = message.body
     ? `${message.body.slice(0, 200)}${message.body.length > 200 ? "…" : ""}`
@@ -68,22 +70,27 @@ function EmailCard({
     >
       <div className="flex items-start justify-between gap-3">
         <Link href={`/inbox/${message.id}`} className="flex flex-1 flex-col gap-2">
-          {analysis && (
+          {(personalizedBadge || analysis) && (
             <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE_STYLES[analysis.priority]}`}
-              >
-                {analysis.priority} priority
-              </span>
-              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                {analysis.category}
-              </span>
-              {analysis.actionRequired && (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                  Action needed
-                  {analysis.action ? `: ${analysis.action}` : ""}
-                  {analysis.deadline ? ` (by ${analysis.deadline})` : ""}
-                </span>
+              {personalizedBadge}
+              {analysis && (
+                <>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE_STYLES[analysis.priority]}`}
+                  >
+                    {analysis.priority} priority
+                  </span>
+                  <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                    {analysis.category}
+                  </span>
+                  {analysis.actionRequired && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                      Action needed
+                      {analysis.action ? `: ${analysis.action}` : ""}
+                      {analysis.deadline ? ` (by ${analysis.deadline})` : ""}
+                    </span>
+                  )}
+                </>
               )}
             </div>
           )}

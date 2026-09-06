@@ -10,6 +10,7 @@ import type { NextRequest } from "next/server";
 const PROTECTED_PREFIXES = [
   "/dashboard",
   "/inbox",
+  "/important",
   "/sent",
   "/drafts",
   "/spam",

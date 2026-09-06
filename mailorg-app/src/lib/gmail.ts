@@ -25,6 +25,11 @@ export interface InboxMessage {
   from: string;
   to: string;
   date: string;
+  // Raw ms-since-epoch, alongside the formatted `date` string above - needed
+  // whenever messages must be sorted chronologically (e.g. the Important
+  // for you view, which orders by Gmail date after resolving messages out
+  // of DB order). The formatted string isn't safely sortable.
+  internalDate: number;
   body: string;
   isUnread: boolean;
   isStarred: boolean;
@@ -262,6 +267,7 @@ function toInboxMessage(message: GmailMessageResponse): InboxMessage {
     date: message.internalDate
       ? new Date(Number(message.internalDate)).toLocaleString()
       : "(unknown)",
+    internalDate: Number(message.internalDate ?? 0),
     body: extractBody(message.payload),
     isUnread: (message.labelIds ?? []).includes("UNREAD"),
     isStarred: (message.labelIds ?? []).includes("STARRED"),
