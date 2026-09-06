@@ -349,6 +349,229 @@ export async function interpretUserContext(
   return parsed;
 }
 
+const PERSONALIZED_IMPORTANCE_VALUES = [
+  "IMPORTANT",
+  "NOT_IMPORTANT",
+  "UNCERTAIN",
+] as const;
+
+const MAX_PERSONALIZED_REASON_LENGTH = 500;
+
+export interface PersonalizedAnalysisResult {
+  importance: (typeof PERSONALIZED_IMPORTANCE_VALUES)[number];
+  reason: string;
+}
+
+const PERSONALIZED_IMPORTANCE_SCHEMA = {
+  type: "object",
+  properties: {
+    importance: { type: "string", enum: PERSONALIZED_IMPORTANCE_VALUES },
+    reason: { type: "string" },
+  },
+  required: ["importance", "reason"],
+  additionalProperties: false,
+};
+
+function isValidPersonalizedAnalysis(
+  value: unknown
+): value is PersonalizedAnalysisResult {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+
+  return (
+    typeof v.importance === "string" &&
+    (PERSONALIZED_IMPORTANCE_VALUES as readonly string[]).includes(
+      v.importance
+    ) &&
+    typeof v.reason === "string" &&
+    v.reason.trim().length > 0 &&
+    v.reason.length <= MAX_PERSONALIZED_REASON_LENGTH
+  );
+}
+
+function toPersonalizedAnalysis(row: {
+  importance: string;
+  reason: string;
+}): PersonalizedAnalysisResult | null {
+  return isValidPersonalizedAnalysis(row) ? row : null;
+}
+
+interface PersonalizableEmail {
+  id: string;
+  subject: string;
+  from: string;
+  body: string;
+}
+
+// Determines what a specific email means for THIS user, based only on what
+// they've explicitly told MailOrg via UserContext - never Gmail history,
+// never EmailFeedback (a later phase), never inferred demographic or
+// "typical user" assumptions. Deliberately separate from analyzeEmail:
+// that answers "what is this email about" in general and is never
+// reinterpreted here, only read as one input alongside the user's context.
+//
+// Returns null when the user has no UserContext yet (nothing to
+// personalize against - not the same as the model's own UNCERTAIN
+// classification) or if analysis fails for any reason; never throws, so a
+// personalization failure can never break inbox rendering.
+//
+// Cached in PersonalizedEmailAnalysis, keyed by (userId, messageId) and
+// pinned to the UserContext.updatedAt it was generated against. A cached
+// row whose contextUpdatedAt no longer matches the user's current
+// UserContext.updatedAt is stale and gets regenerated (same row, upserted,
+// never duplicated).
+export async function analyzeEmailPersonalized(
+  userId: string,
+  email: PersonalizableEmail,
+  generalAnalysis: EmailAnalysis
+): Promise<PersonalizedAnalysisResult | null> {
+  const userContext = await prisma.userContext.findUnique({
+    where: { userId },
+  });
+
+  if (!userContext) {
+    return null;
+  }
+
+  try {
+    const stored = await prisma.personalizedEmailAnalysis.findUnique({
+      where: { userId_messageId: { userId, messageId: email.id } },
+    });
+
+    if (
+      stored &&
+      stored.contextUpdatedAt.getTime() === userContext.updatedAt.getTime()
+    ) {
+      const cached = toPersonalizedAnalysis(stored);
+      if (cached) {
+        return cached;
+      }
+    }
+  } catch (err) {
+    console.error(
+      "Failed to read stored personalized analysis:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
+  const interpreted = isValidUserContextInterpretation(
+    userContext.interpretedContext
+  )
+    ? userContext.interpretedContext
+    : null;
+
+  try {
+    const response = await client.responses.create({
+      model: MODEL,
+      instructions:
+        "You determine whether a specific email is important to ONE " +
+        "particular MailOrg user, based only on what that user has " +
+        "explicitly told MailOrg matters to them right now. The user's " +
+        "context describes what matters to THIS user - it is not a " +
+        "general description of what people in their situation typically " +
+        "care about. Determine importance specifically for this user, " +
+        "using their explicit context as the primary evidence. " +
+        "If the email clearly matches something the user explicitly " +
+        "named as a goal, priority, or current focus, classify IMPORTANT. " +
+        "If the email clearly matches something the user explicitly said " +
+        "matters less or should be deprioritized, classify NOT_IMPORTANT. " +
+        "If the email is generically low-value on its own - routine " +
+        "automated notifications, marketing, newsletters, social media " +
+        "alerts - and does not conflict with anything the user said " +
+        "matters, classify NOT_IMPORTANT. " +
+        "If the email could plausibly matter to someone but the user's " +
+        "context does not establish whether this type of email matters " +
+        "to THIS user, classify UNCERTAIN rather than guessing. This " +
+        "includes emails about a genuinely significant topic (financial " +
+        "aid, a different opportunity, another institution or " +
+        "organization, etc.) that the user's context simply never " +
+        "mentions - the user naming ONE goal or priority does not mean " +
+        "everything else is unimportant, it only tells you about that one " +
+        "thing. Only classify NOT_IMPORTANT for an unmentioned topic if " +
+        "the email itself is generically low-value as described above; " +
+        "otherwise prefer UNCERTAIN over assuming irrelevance. " +
+        "Never invent preferences the user did not state. Never assume " +
+        "typical student, professional, or family priorities. Never " +
+        "infer demographic, personal, or other sensitive attributes. Do " +
+        "not give advice. Do not rewrite or restate the user's context as " +
+        "if it were more specific than it is. Do not classify based on " +
+        "sender prestige alone. Do not classify something as important " +
+        "merely because it contains a deadline - only the user's own " +
+        "stated priorities determine importance. Respond only in " +
+        "English, regardless of the email's content or language. " +
+        "Provide a concise one-sentence reason grounded specifically in " +
+        "what the user said (or, for UNCERTAIN, what's missing from " +
+        "their context) - never a generic explanation.",
+      input:
+        `User's own stated context:\n${userContext.contextText}\n\n` +
+        (interpreted
+          ? `Interpreted context (goals/priorities/lowPrioritySignals/currentContext):\n${JSON.stringify(interpreted)}\n\n`
+          : "") +
+        `General analysis of this email (what it's about, not personalized):\n` +
+        `Priority: ${generalAnalysis.priority}\nCategory: ${generalAnalysis.category}\nSummary: ${generalAnalysis.summary}\n\n` +
+        `Email:\nFrom: ${email.from}\nSubject: ${email.subject}\n\nBody:\n${email.body.slice(0, 4000)}`,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "personalized_importance",
+          schema: PERSONALIZED_IMPORTANCE_SCHEMA,
+          strict: true,
+        },
+      },
+    });
+
+    const parsed: unknown = JSON.parse(response.output_text);
+    if (!isValidPersonalizedAnalysis(parsed)) {
+      console.error("Personalized analysis failed schema validation.");
+      return null;
+    }
+
+    try {
+      await prisma.personalizedEmailAnalysis.upsert({
+        where: { userId_messageId: { userId, messageId: email.id } },
+        create: {
+          userId,
+          messageId: email.id,
+          importance: parsed.importance,
+          reason: parsed.reason,
+          contextUpdatedAt: userContext.updatedAt,
+        },
+        update: {
+          importance: parsed.importance,
+          reason: parsed.reason,
+          contextUpdatedAt: userContext.updatedAt,
+        },
+      });
+    } catch (err) {
+      if (!isUniqueConstraintError(err)) {
+        console.error(
+          "Failed to persist personalized analysis:",
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+      // A unique-constraint hit means a concurrent request already wrote
+      // this row first - the constraint working as intended. Either way
+      // we still return our own freshly computed `parsed` result below.
+    }
+
+    return parsed;
+  } catch (err) {
+    // Categorical fields only - never err.message (can echo request
+    // fragments back, e.g. OpenAI's own invalid-key error), and never the
+    // user's context text or the email body/subject.
+    const status =
+      err && typeof err === "object" && "status" in err
+        ? (err as { status?: unknown }).status
+        : undefined;
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+    console.error("Personalized email analysis failed:", { status, code });
+    return null;
+  }
+}
+
 // Analyzes multiple emails in parallel, keyed by message id. Individual
 // failures (already caught inside analyzeEmail) fall back to a neutral
 // result rather than rejecting the whole batch.

@@ -5,7 +5,12 @@ import { ArrowLeft } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { GoogleReauthRequiredError } from "@/lib/google-tokens";
 import { getEmailById, getEmailThread, type InboxMessage } from "@/lib/gmail";
-import { analyzeEmail, type EmailAnalysis } from "@/lib/ai";
+import {
+  analyzeEmail,
+  analyzeEmailPersonalized,
+  type EmailAnalysis,
+  type PersonalizedAnalysisResult,
+} from "@/lib/ai";
 import { ArchiveButton } from "../ArchiveButton";
 import { getEmailImportanceFeedback } from "../actions";
 import { EmailFeedbackControl } from "../EmailFeedbackControl";
@@ -25,6 +30,37 @@ const PRIORITY_BORDER_STYLES: Record<EmailAnalysis["priority"], string> = {
   high: "border-l-red-500",
   medium: "border-l-amber-400",
   low: "border-l-zinc-300 dark:border-l-zinc-700",
+};
+
+const PERSONALIZED_BADGE_STYLES: Record<
+  PersonalizedAnalysisResult["importance"],
+  string
+> = {
+  IMPORTANT:
+    "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  NOT_IMPORTANT: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+  UNCERTAIN:
+    "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+};
+
+const PERSONALIZED_BADGE_LABELS: Record<
+  PersonalizedAnalysisResult["importance"],
+  string
+> = {
+  IMPORTANT: "Important to you",
+  NOT_IMPORTANT: "Not important",
+  UNCERTAIN: "Uncertain",
+};
+
+const PERSONALIZED_INTRO: Record<
+  PersonalizedAnalysisResult["importance"],
+  string
+> = {
+  IMPORTANT: "Important to you based on your current context.",
+  NOT_IMPORTANT: "Not important based on your current context.",
+  UNCERTAIN:
+    "Potentially important, but I don't have enough information from " +
+    "your context to know whether this type of email matters to you.",
 };
 
 function formatFileSize(bytes: number): string {
@@ -114,6 +150,29 @@ export default async function EmailDetailPage({
     }
   }
 
+  // Personalization is derived from the user's own UserContext plus the
+  // general analysis above - never Gmail history, never EmailFeedback (a
+  // later phase). null means either there's no UserContext yet or
+  // analysis failed; either way there's nothing to show.
+  let personalized: PersonalizedAnalysisResult | null = null;
+
+  if (message && analysis) {
+    try {
+      personalized = await analyzeEmailPersonalized(
+        userId,
+        {
+          id: message.id,
+          subject: message.subject,
+          from: message.from,
+          body: message.body,
+        },
+        analysis
+      );
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   if (error) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-10 sm:px-12">
@@ -166,6 +225,31 @@ export default async function EmailDetailPage({
       </article>
 
       <EmailFeedbackControl messageId={message.id} currentDecision={feedback} />
+
+      {personalized && (
+        <section className="flex flex-col gap-2 rounded-xl border border-blue-100 bg-blue-50/40 p-6 dark:border-blue-900/40 dark:bg-blue-950/20">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+            MailOrg
+          </h2>
+          <span
+            className={`w-fit rounded-full px-2.5 py-1 text-xs font-medium ${PERSONALIZED_BADGE_STYLES[personalized.importance]}`}
+          >
+            {PERSONALIZED_BADGE_LABELS[personalized.importance]}
+          </span>
+          <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            {PERSONALIZED_INTRO[personalized.importance]}
+          </p>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {personalized.reason}
+          </p>
+          {personalized.importance === "UNCERTAIN" && (
+            <p className="text-xs text-zinc-500 dark:text-zinc-500">
+              Use the buttons above to tell MailOrg whether this matters to
+              you.
+            </p>
+          )}
+        </section>
+      )}
 
       <section className="flex flex-col gap-3 rounded-xl border border-black/[.08] bg-white p-6 dark:border-white/[.08] dark:bg-zinc-950">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">

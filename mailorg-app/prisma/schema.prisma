@@ -20,12 +20,13 @@ model User {
   emailVerified DateTime?
   image         String?
 
-  accounts      Account[]
-  sessions      Session[]
-  preferences   UserPreferences?
-  context       UserContext?
-  emailAnalyses EmailAnalysisRecord[]
-  emailFeedback EmailFeedback[]
+  accounts             Account[]
+  sessions             Session[]
+  preferences          UserPreferences?
+  context              UserContext?
+  emailAnalyses        EmailAnalysisRecord[]
+  emailFeedback        EmailFeedback[]
+  personalizedAnalyses PersonalizedEmailAnalysis[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -123,6 +124,40 @@ model EmailAnalysisRecord {
   actionRequired Boolean
   action         String? @db.Text
   deadline       String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, messageId])
+}
+
+enum PersonalizedImportance {
+  IMPORTANT
+  NOT_IMPORTANT
+  UNCERTAIN
+}
+
+// Answers "what does this email mean for THIS user?" - distinct from
+// EmailAnalysisRecord, which answers "what is this email about?" in
+// general and is never overwritten or reinterpreted here. Derived from
+// UserContext (contextText + interpretedContext) plus the existing general
+// analysis, never from Gmail history or EmailFeedback (that's a later
+// phase). contextUpdatedAt pins this row to the UserContext.updatedAt it
+// was generated against - when the user edits their context, a stored row
+// with a different contextUpdatedAt is stale and gets regenerated in
+// place (upsert), never duplicated. Stores only the derived judgment, not
+// the email body.
+model PersonalizedEmailAnalysis {
+  id        String @id @default(cuid())
+  userId    String
+  messageId String
+
+  importance PersonalizedImportance
+  reason     String                 @db.Text
+
+  contextUpdatedAt DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
