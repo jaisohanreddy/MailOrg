@@ -25,6 +25,7 @@ model User {
   preferences   UserPreferences?
   context       UserContext?
   emailAnalyses EmailAnalysisRecord[]
+  emailFeedback EmailFeedback[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -122,6 +123,34 @@ model EmailAnalysisRecord {
   actionRequired Boolean
   action         String? @db.Text
   deadline       String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, messageId])
+}
+
+enum EmailFeedbackDecision {
+  IMPORTANT
+  NOT_IMPORTANT
+}
+
+// The user's own explicit judgment that a specific Gmail message is or
+// isn't important to them - a raw behavioral signal, deliberately separate
+// from UserContext (the user's stated goals/priorities, not tied to any
+// one email) and from EmailAnalysisRecord (AI's own priority/category
+// output for an email). Neither of those is read or written here, and
+// this table only ever records the judgment itself - never the email body
+// - so it stays independent of whether the message still exists in Gmail.
+// Learning from this feedback (e.g. inferring "emails like this matter")
+// is a later phase; this is storage only.
+model EmailFeedback {
+  id        String                @id @default(cuid())
+  userId    String
+  messageId String
+  decision  EmailFeedbackDecision
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

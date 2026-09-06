@@ -13,6 +13,9 @@ import {
   type InboxMessage,
 } from "@/lib/gmail";
 import { analyzeEmails, type EmailAnalysis } from "@/lib/ai";
+import { prisma } from "@/lib/prisma";
+import { EmailFeedbackDecision } from "@/generated/prisma/client";
+import type { EmailFeedbackDecision as FeedbackDecision } from "@/generated/prisma/client";
 
 type GmailActionResult = { success: true } | { success: false; error: string };
 
@@ -236,4 +239,75 @@ export async function updateEmailStarredStatus(
   revalidatePath(`/inbox/${messageId}`);
 
   return { success: true };
+}
+
+// Records (or updates) the current user's own explicit importance judgment
+// for one Gmail message. This is purely a behavioral-signal write: it never
+// calls the Gmail API, never touches Gmail labels, never re-runs AI
+// analysis, and never modifies UserContext - it only persists the
+// judgment itself. userId always comes from the session, never the caller.
+export async function setEmailImportanceFeedback(
+  messageId: string,
+  decision: FeedbackDecision
+): Promise<GmailActionResult> {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    return { success: false, error: "You need to be signed in to do that." };
+  }
+
+  if (typeof messageId !== "string" || !messageId.trim()) {
+    return { success: false, error: "A valid email is required." };
+  }
+
+  if (!Object.values(EmailFeedbackDecision).includes(decision)) {
+    return { success: false, error: "Invalid feedback value." };
+  }
+
+  try {
+    await prisma.emailFeedback.upsert({
+      where: {
+        userId_messageId: { userId: session.user.id, messageId },
+      },
+      create: { userId: session.user.id, messageId, decision },
+      update: { decision },
+    });
+  } catch (err) {
+    console.error(
+      "Failed to save email importance feedback:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return {
+      success: false,
+      error: "Couldn't save your feedback. Please try again.",
+    };
+  }
+
+  revalidatePath(`/inbox/${messageId}`);
+  return { success: true };
+}
+
+// Reads the current user's existing feedback for one message, if any.
+// Returns null both when unauthenticated and when there's simply no
+// feedback yet - "nothing recorded" is the normal case, not an error.
+export async function getEmailImportanceFeedback(
+  messageId: string
+): Promise<FeedbackDecision | null> {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    return null;
+  }
+
+  if (typeof messageId !== "string" || !messageId.trim()) {
+    return null;
+  }
+
+  const record = await prisma.emailFeedback.findUnique({
+    where: {
+      userId_messageId: { userId: session.user.id, messageId },
+    },
+  });
+
+  return record?.decision ?? null;
 }

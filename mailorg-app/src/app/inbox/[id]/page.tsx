@@ -7,6 +7,8 @@ import { GoogleReauthRequiredError } from "@/lib/google-tokens";
 import { getEmailById, getEmailThread, type InboxMessage } from "@/lib/gmail";
 import { analyzeEmail, type EmailAnalysis } from "@/lib/ai";
 import { ArchiveButton } from "../ArchiveButton";
+import { getEmailImportanceFeedback } from "../actions";
+import { EmailFeedbackControl } from "../EmailFeedbackControl";
 import { ReadStatusToggle } from "../ReadStatusToggle";
 import { SpamButton } from "../SpamButton";
 import { StarToggle } from "../StarToggle";
@@ -88,6 +90,10 @@ export default async function EmailDetailPage({
     }
   }
 
+  const feedback = message
+    ? await getEmailImportanceFeedback(message.id)
+    : null;
+
   let analysis: EmailAnalysis | null = null;
   let analysisError: string | null = null;
 
@@ -158,6 +164,8 @@ export default async function EmailDetailPage({
           <span>{message.date}</span>
         </div>
       </article>
+
+      <EmailFeedbackControl messageId={message.id} currentDecision={feedback} />
 
       <section className="flex flex-col gap-3 rounded-xl border border-black/[.08] bg-white p-6 dark:border-white/[.08] dark:bg-zinc-950">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
