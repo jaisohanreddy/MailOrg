@@ -5,8 +5,10 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import {
   archiveEmail,
+  BASIC_EMAIL_PATTERN,
   listRecentEmails,
   markEmailAsSpam,
+  sendForward,
   sendReply,
   setEmailReadStatus,
   setEmailStarred,
@@ -347,6 +349,72 @@ export async function sendReplyAction(
     return {
       success: false,
       error: "Couldn't send your reply. Please try again.",
+    };
+  }
+
+  revalidatePath(`/inbox/${messageId}`);
+  return { success: true };
+}
+
+// Forwards an existing message to one or more recipients as a brand-new
+// outgoing message (never threaded onto the original conversation - see
+// sendForward). recipients is a single comma-separated string from the
+// composer's text input; message is the optional note shown above the
+// forwarded content. Recipient format is validated here (a clear rejection
+// with an error message) rather than silently dropping bad addresses.
+export async function sendForwardAction(
+  messageId: string,
+  recipients: string,
+  message: string
+): Promise<GmailActionResult> {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    return { success: false, error: "You need to be signed in to do that." };
+  }
+
+  if (typeof messageId !== "string" || !messageId.trim()) {
+    return { success: false, error: "A valid email is required." };
+  }
+
+  if (typeof recipients !== "string") {
+    return { success: false, error: "At least one recipient is required." };
+  }
+
+  const recipientList = recipients
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => address.length > 0);
+
+  if (recipientList.length === 0) {
+    return { success: false, error: "At least one recipient is required." };
+  }
+
+  const invalidRecipient = recipientList.find(
+    (address) => !BASIC_EMAIL_PATTERN.test(address)
+  );
+  if (invalidRecipient) {
+    return {
+      success: false,
+      error: `"${invalidRecipient}" doesn't look like a valid email address.`,
+    };
+  }
+
+  try {
+    await sendForward(
+      session.user.id,
+      messageId,
+      recipientList,
+      typeof message === "string" ? message : ""
+    );
+  } catch (err) {
+    console.error(
+      "Failed to forward email:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return {
+      success: false,
+      error: "Couldn't forward this email. Please try again.",
     };
   }
 

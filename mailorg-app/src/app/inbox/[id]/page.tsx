@@ -14,6 +14,7 @@ import {
 import { ArchiveButton } from "../ArchiveButton";
 import { getEmailImportanceFeedback } from "../actions";
 import { EmailFeedbackControl } from "../EmailFeedbackControl";
+import { ForwardComposer } from "../ForwardComposer";
 import { ReadStatusToggle } from "../ReadStatusToggle";
 import { ReconnectGoogleButton } from "../ReconnectGoogleButton";
 import { ReplyComposer } from "../ReplyComposer";
@@ -381,7 +382,16 @@ export default async function EmailDetailPage({
         </div>
       </section>
 
-      <ReplyComposer messageId={message.id} />
+      <div className="flex flex-col gap-3">
+        <ReplyComposer messageId={message.id} />
+        <ForwardComposer
+          messageId={message.id}
+          subject={message.subject}
+          from={message.from}
+          date={message.date}
+          body={message.body}
+        />
+      </div>
     </div>
   );
 }

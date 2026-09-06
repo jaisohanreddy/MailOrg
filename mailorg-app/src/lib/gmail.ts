@@ -500,10 +500,31 @@ function sanitizeHeaderValue(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim();
 }
 
+// Joins RFC 2822 header lines and a body into a raw message and
+// base64url-encodes it the way Gmail's messages.send expects. Shared by
+// sendReply and sendForward so the MIME-construction/encoding logic only
+// lives in one place.
+function encodeMimeMessage(headerLines: string[], body: string): string {
+  const rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${body}`;
+  return Buffer.from(rawMessage, "utf-8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+// Structural check only (not a full RFC 5322 validator) - enough to reject
+// obviously malformed input. Exported so callers (e.g. the forward Server
+// Action) can give a specific "this address looks wrong" error before ever
+// reaching sendForward, without duplicating the pattern.
+export const BASIC_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // Sends a plain-text reply to an existing Gmail message via messages.send,
 // threading it into the same Gmail conversation via threadId plus the
-// standard In-Reply-To/References headers. Requires the gmail.send scope
-// (see src/lib/auth.ts) - gmail.modify alone does not permit sending.
+// standard In-Reply-To/References headers. Uses the gmail.modify scope
+// already requested in src/lib/auth.ts - confirmed empirically (a real
+// reply sent successfully against the live account) that gmail.modify
+// alone covers messages.send; no separate gmail.send scope is needed.
 //
 // Re-fetches the original message fresh (metadata only, not the full
 // body) rather than trusting any caller-supplied header/subject/thread
@@ -585,12 +606,7 @@ export async function sendReply(
 
   // From is deliberately omitted - Gmail fills it in with the
   // authenticated account's own address when not set.
-  const rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${body}`;
-  const encodedMessage = Buffer.from(rawMessage, "utf-8")
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  const encodedMessage = encodeMimeMessage(headerLines, body);
 
   const sendUrl = new URL(`${GMAIL_API_BASE}/messages/send`);
   const sendResponse = await fetchGmail(userId, sendUrl, {
@@ -602,6 +618,76 @@ export async function sendReply(
   if (!sendResponse.ok) {
     throw new Error(
       `Gmail API error while sending reply to message ${messageId}: ${sendResponse.status}`
+    );
+  }
+}
+
+// Forwards an existing message as a brand-new outgoing message - deliberately
+// NOT threaded (no threadId in the send request, no In-Reply-To/References
+// headers), so Gmail creates a fresh conversation rather than appending to
+// the original thread. Reuses getEmailById's existing header/body parsing
+// (the same subject/from/to/date/body already shown in the UI) instead of
+// a second raw fetch, since a forward only needs to *display* the original
+// content, not thread against it.
+export async function sendForward(
+  userId: string,
+  messageId: string,
+  recipients: string[],
+  message: string
+): Promise<void> {
+  if (recipients.length === 0) {
+    throw new Error("At least one recipient is required");
+  }
+
+  const invalid = recipients.find((r) => !BASIC_EMAIL_PATTERN.test(r));
+  if (invalid) {
+    throw new Error(`Invalid recipient address`);
+  }
+
+  const original = await getEmailById(userId, messageId);
+
+  if (!original) {
+    throw new Error(`Message ${messageId} not found`);
+  }
+
+  const subject = /^fwd:/i.test(original.subject.trim())
+    ? original.subject
+    : `Fwd: ${original.subject}`;
+
+  const forwardedBlock =
+    `---------- Forwarded message ---------\n` +
+    `From: ${original.from}\n` +
+    `Date: ${original.date}\n` +
+    `Subject: ${original.subject}\n` +
+    `To: ${original.to}\n\n` +
+    `${original.body || "(no body extracted)"}`;
+
+  const body = message.trim()
+    ? `${message.trim()}\n\n${forwardedBlock}`
+    : forwardedBlock;
+
+  const headerLines = [
+    `To: ${sanitizeHeaderValue(recipients.join(", "))}`,
+    `Subject: ${sanitizeHeaderValue(subject)}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset="UTF-8"`,
+    `Content-Transfer-Encoding: 8bit`,
+  ];
+
+  const encodedMessage = encodeMimeMessage(headerLines, body);
+
+  const sendUrl = new URL(`${GMAIL_API_BASE}/messages/send`);
+  const sendResponse = await fetchGmail(userId, sendUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // No threadId here - forwarding must create a new, separate
+    // conversation rather than appending to the original thread.
+    body: JSON.stringify({ raw: encodedMessage }),
+  });
+
+  if (!sendResponse.ok) {
+    throw new Error(
+      `Gmail API error while forwarding message ${messageId}: ${sendResponse.status}`
     );
   }
 }
