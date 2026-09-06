@@ -8,6 +8,7 @@ import {
   BASIC_EMAIL_PATTERN,
   listRecentEmails,
   markEmailAsSpam,
+  sendCompose,
   sendForward,
   sendReply,
   setEmailReadStatus,
@@ -419,5 +420,65 @@ export async function sendForwardAction(
   }
 
   revalidatePath(`/inbox/${messageId}`);
+  return { success: true };
+}
+
+// Sends a brand-new message not tied to any existing thread/message -
+// same validation pattern as sendForwardAction (recipients is a single
+// comma-separated string, validated and rejected with a specific error
+// rather than silently dropped). subject/body are trimmed but may be
+// empty; only the recipient is required.
+export async function sendComposeAction(
+  recipients: string,
+  subject: string,
+  body: string
+): Promise<GmailActionResult> {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    return { success: false, error: "You need to be signed in to do that." };
+  }
+
+  if (typeof recipients !== "string") {
+    return { success: false, error: "At least one recipient is required." };
+  }
+
+  const recipientList = recipients
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => address.length > 0);
+
+  if (recipientList.length === 0) {
+    return { success: false, error: "At least one recipient is required." };
+  }
+
+  const invalidRecipient = recipientList.find(
+    (address) => !BASIC_EMAIL_PATTERN.test(address)
+  );
+  if (invalidRecipient) {
+    return {
+      success: false,
+      error: `"${invalidRecipient}" doesn't look like a valid email address.`,
+    };
+  }
+
+  const safeSubject = typeof subject === "string" ? subject.trim() : "";
+  const safeBody = typeof body === "string" ? body.trim() : "";
+
+  try {
+    await sendCompose(session.user.id, recipientList, safeSubject, safeBody);
+  } catch (err) {
+    console.error(
+      "Failed to send composed message:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return {
+      success: false,
+      error: "Couldn't send this email. Please try again.",
+    };
+  }
+
+  revalidatePath("/inbox");
+  revalidatePath("/sent");
   return { success: true };
 }

@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { ComposeButton } from "./ComposeButton";
+
 const FOLDERS = [
   { href: "/inbox", label: "Inbox" },
   { href: "/important", label: "Important for you" },
@@ -35,6 +37,8 @@ function NavLink({ href, label, active }: { href: string; label: string; active:
 export function FolderNav({ active }: { active: string }) {
   return (
     <nav className="flex flex-row flex-wrap gap-2 sm:w-40 sm:flex-none sm:flex-col">
+      <ComposeButton />
+      <div className="my-1 h-px w-full bg-black/[.08] dark:bg-white/[.08]" />
       {FOLDERS.map((folder) => (
         <NavLink key={folder.href} href={folder.href} label={folder.label} active={active} />
       ))}

@@ -692,6 +692,53 @@ export async function sendForward(
   }
 }
 
+// Sends a brand-new outgoing message with no relation to any existing
+// Gmail thread - same "new conversation" shape as sendForward (no
+// threadId, no In-Reply-To/References), just without an original message
+// to fetch or include. subject/body may be empty - Gmail itself allows
+// sending a blank subject/body, so this doesn't add an artificial
+// requirement beyond having at least one valid recipient.
+export async function sendCompose(
+  userId: string,
+  recipients: string[],
+  subject: string,
+  body: string
+): Promise<void> {
+  if (recipients.length === 0) {
+    throw new Error("At least one recipient is required");
+  }
+
+  const invalid = recipients.find((r) => !BASIC_EMAIL_PATTERN.test(r));
+  if (invalid) {
+    throw new Error(`Invalid recipient address`);
+  }
+
+  const headerLines = [
+    `To: ${sanitizeHeaderValue(recipients.join(", "))}`,
+    `Subject: ${sanitizeHeaderValue(subject)}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset="UTF-8"`,
+    `Content-Transfer-Encoding: 8bit`,
+  ];
+
+  const encodedMessage = encodeMimeMessage(headerLines, body);
+
+  const sendUrl = new URL(`${GMAIL_API_BASE}/messages/send`);
+  const sendResponse = await fetchGmail(userId, sendUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // No threadId - a freshly composed message always starts a new
+    // conversation, never appended to an existing one.
+    body: JSON.stringify({ raw: encodedMessage }),
+  });
+
+  if (!sendResponse.ok) {
+    throw new Error(
+      `Gmail API error while sending composed message: ${sendResponse.status}`
+    );
+  }
+}
+
 // Adds/removes Gmail labels on a message via the messages.modify endpoint -
 // the shared primitive behind read/unread, starring, and any future
 // label-based mutation (archive, trash, spam, ...). Requires gmail.modify.
